@@ -40,6 +40,10 @@ On a row whose database is MariaDB, the caption says `MariaDB <version>`, and th
 
 Each entry runs the tool in a screen session from the project's workspace folder: read it on the Screens page.
 
+**Adding or removing a web admin restarts the project.** DDEV starts the add-on's service beside the project, and on
+that restart it also recreates its shared router, so every DDEV site of the machine is unreachable for a few seconds.
+Add a web admin when you need one, and leave it there rather than adding and removing it often.
+
 ## The tool
 
 ```bash
