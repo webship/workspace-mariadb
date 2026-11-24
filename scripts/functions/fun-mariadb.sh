@@ -211,11 +211,14 @@ function mariadb_running() {
   mariadb_sql '-t' "SHOW GLOBAL STATUS LIKE 'Slow_queries'; SELECT @@slow_query_log AS \`Slow query log on\`, @@long_query_time AS \`Slow after (seconds)\`" ;
 }
 
-# This project's exports past the keep: setting go, the oldest first.
+# This project's exports past the keep: setting go, the oldest first; never the dump an import is reading
+# (MARIADB_KEEP_SPARE, set by mariadb_import for its before-import export).
 function mariadb_keep() {
-  local keep="${plugin_mariadb_keep:-0}" dir="${backups}/${doc_name}" old ;
+  local keep="${plugin_mariadb_keep:-0}" dir="${backups}/${doc_name}" old spare="" ;
   [[ "${keep}" =~ ^[0-9]+$ ]] && [ "${keep}" -gt 0 ] || return 0 ;
+  [ -n "${MARIADB_KEEP_SPARE:-}" ] && spare="$(cd "$(dirname "${MARIADB_KEEP_SPARE}")" 2> /dev/null && pwd -P)/$(basename "${MARIADB_KEEP_SPARE}")" ;
   ls -1t "${dir}/${PROJECT_NAME}--mariadb--"*.sql.gz 2> /dev/null | tail -n +$(( keep + 1 )) | while read -r old ; do
+    [ -n "${spare}" ] && [ "$(cd "$(dirname "${old}")" && pwd -P)/$(basename "${old}")" = "${spare}" ] && continue ;
     rm -f "${old:?}" && echo "Removed an older export (keep: ${keep}): $(basename "${old}")" ;
   done
 }
@@ -245,6 +248,19 @@ function mariadb_export() {
   mariadb_keep ;
 }
 
+# A dump an import can take, checked before anything changes: a gzip that is whole (gzip -t), with something in it, or
+# a .sql file that is not empty.
+function mariadb_dump_ok() {
+  local file="$1" ;
+  case "${file}" in
+    *.gz)
+      gzip -t "${file}" 2> /dev/null || { echo "$(basename "${file}") is not a whole gzip file: nothing was imported." ; return 1 ; } ;
+      [ -n "$(gunzip -c "${file}" 2> /dev/null | head -c 64 | tr -d '\0')" ] || { echo "$(basename "${file}") is empty: nothing was imported." ; return 1 ; } ;;
+    *)
+      [ -r "${file}" ] && [ -s "${file}" ] || { echo "$(basename "${file}") is empty, or cannot be read: nothing was imported." ; return 1 ; } ;;
+  esac
+}
+
 # --import <file>: the database as it is, exported first; then emptied and filled from the dump. DDEV's import-db
 # empties it itself.
 function mariadb_import() {
@@ -252,8 +268,10 @@ function mariadb_import() {
   case "${file}" in /*) ;; *) file="${current_path:-$PWD}/${file}" ;; esac
   [ -f "${file}" ] || { echo "No such file: ${file}" ; return 1 ; } ;
   case "${file}" in *.sql|*.sql.gz) ;; *) echo "A MariaDB dump is a .sql or .sql.gz file: ${file}" ; return 1 ;; esac
+  mariadb_dump_ok "${file}" || return 1 ;
   if [ "${NO_SAFETY_EXPORT}" != yes ] ; then
-    mariadb_export '' before-import || { echo "The export of the database as it is failed: nothing was imported." ; return 1 ; } ;
+    # The keep: setting prunes old exports after this one: never the dump being imported.
+    MARIADB_KEEP_SPARE="${file}" mariadb_export '' before-import || { echo "The export of the database as it is failed: nothing was imported." ; return 1 ; } ;
   fi
   echo "Importing $(basename "${file}") into the MariaDB database of ${PROJECT_NAME} ($(mariadb_runtime_title "${MARIADB_RUNTIME}"))" ;
   if [ "${MARIADB_VIA}" = ddev ] ; then
@@ -263,7 +281,14 @@ function mariadb_import() {
     # have would stay otherwise.
     mariadb_in_db "${MARIADB_LOGIN}"' cs="$("$c" "$@" -N -B -e "SELECT CONCAT(default_character_set_name, \" \", default_collation_name) FROM information_schema.schemata WHERE schema_name = \"$d\"")"; extra=""; [ -n "$cs" ] && extra=" CHARACTER SET ${cs% *} COLLATE ${cs#* }"; "$c" "$@" -e "DROP DATABASE IF EXISTS \`$d\`; CREATE DATABASE \`$d\`$extra"' || { echo "The database could not be emptied: nothing was imported." ; return 1 ; } ;
     if [ "${MARIADB_VIA}" = compose ] ; then
-      case "${file}" in *.gz) gunzip -c "${file}" ;; *) cat "${file}" ;; esac | mariadb_in_db "${MARIADB_LOGIN} exec \"\$c\" \"\$@\" \"\$d\"" || return 1 ;
+      case "${file}" in *.gz) gunzip -c "${file}" ;; *) cat "${file}" ;; esac | mariadb_in_db "${MARIADB_LOGIN} exec \"\$c\" \"\$@\" \"\$d\"" ;
+      local st=("${PIPESTATUS[@]}") ;
+      if [ "${st[0]}" -ne 0 ] ; then
+        echo "The import failed: $(basename "${file}") could not be read whole, so the database may hold only part of it." ;
+        [ "${NO_SAFETY_EXPORT}" != yes ] && echo "The database as it was is the before-import export above, in ${backups}/${doc_name}." ;
+        return 1 ;
+      fi
+      [ "${st[1]}" -eq 0 ] || { echo "The import failed." ; return 1 ; } ;
     else
       ddev import-db --file="${file}" || return 1 ;
     fi
