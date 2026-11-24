@@ -34,7 +34,8 @@ test('the manifest names the plugin, its family, its settings, its tool and ever
     assert.ok(pkg.files.includes(String(f).split('/')[0]), `${f} is published with the package`);
   }
   assert.strictEqual(manifest.settingsFile, 'plugin.mariadb.settings.yml');
-  assert.match(pkg.dependencies['@webship.co/workspace-database'], /workspace-database/);
+  // A sibling is a version range, never a git URL (webship/workspace, core/docs/releases.md).
+  assert.match(pkg.dependencies['@webship.co/workspace-database'], /^\^1\.\d+\.\d+$/);
   assert.strictEqual(pkg.engines.node, '>=24');
   assert.strictEqual(pkg.devDependencies['@types/node'], '^24.0.0');
 });

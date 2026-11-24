@@ -167,6 +167,3 @@ npm install     # builds dist/ (TypeScript)
 npm run lint
 npm test        # the manifest, the engine, the menu, the tool's functions against scaffolded projects, the items
 ```
-
-Until `@webship.co/workspace-database` is on npm, the package takes it from its repository
-(`github:webship/workspace-database`); its release takes the npm range.

@@ -100,7 +100,7 @@
     ]
   },
   "dependencies": {
-    "@webship.co/workspace-database": "github:webship/workspace-database#1-first-version"
+    "@webship.co/workspace-database": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
